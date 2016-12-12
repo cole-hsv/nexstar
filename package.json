@@ -1,0 +1,21 @@
+{
+    "name": "nexstar",
+    "version": "1.0.0",
+    "description": "Celestron nexstar protocol service.",
+    "main": "index.js",
+    "scripts": {
+        "dev": "nodejs-dashboard node index.js",
+        "start": "node index.js"
+    },
+    "author": "John Cole",
+    "license": "ISC",
+    "dependencies": {
+        "async": "^2.1.1",
+        "lodash": "^4.17.2",
+        "moment": "^2.17.1",
+        "moment-timezone": "^0.5.10"
+    },
+    "devDependencies": {
+        "nodejs-dashboard": "^0.2.1"
+    }
+}

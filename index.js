@@ -1,158 +1,150 @@
 #!/usr/bin/env node
 
 /* eslint no-console: 0 */
+
 'use strict';
-// require('nodejs-dashboard');
-// var _ = require('lodash/fp');
+
 var moment = require('moment-timezone');
 moment.tz.setDefault(moment.tz.guess());
-
 var nexstar = require('./lib');
+var MQTT = require('async-mqtt');
 
-console.log(moment());
-console.log(moment().utc());
-console.log(moment.tz.guess());
-
-/*
-In the node.js intro tutorial (http://nodejs.org/), they show a basic tcp
-server, but for some reason omit a client connecting to it.  I added an
-example at the bottom.
-
-Save the following server in example.js:
-*/
-
-var net = require('net');
-var async = require('async');
-// var pkg = require('../package.json');
-var echo2server;
-var count = 0;
-var server = net.createServer(function (socket) {
-    var id = count++;
-    console.log('server connection', id, socket.bytesRead, socket.address());
-
-    echo2server = function (buffer) {
-        socket.write(buffer);
-    };
-
-    socket.on('data', function (data) {
-        console.log('server socket data', id, data, nexstar.find(data));
-        q.push(nexstar.unknown(data), print);
-    });
-
-    socket.on('end', function () {
-        console.log('server disconnected', id);
-    });
+var mqtt = MQTT.connect('mqtt://localhost');
+mqtt.on('connect', function(value) {
+  console.log('mqtt connected');
 });
 
-server.on('error', function (err) {
-    console.log('server error', err);
-});
-server.listen(4001, '127.0.0.1');
+var printRa = ra => nexstar.degRaToHMSString(ra, 2);
+var printDeg = dec => nexstar.degToDmsString(dec, 2);
 
-/*
-And connect with a tcp client from the command line using netcat, the *nix
-utility for reading and writing across tcp/udp network connections.  I've only
-used it for debugging myself.
+var timeouts = {
+  getRaDec: { timeout: 10000, last: new Date(0) }
+};
 
-$ netcat 127.0.0.1 1337
+async function print(err, result, task) {
+  // console.log('print', err, result, task);
+  try {
+    if (timeouts[task.name]) timeouts[task.name].last = new Date();
+    await mqtt.publish(
+      `nexstar/${task.name}`,
+      JSON.stringify(task.parse(result))
+    );
+  } catch (e) {
+    // Do something about it!
+    console.error('print mqtt error', e);
+  }
 
-You should see:
-> Echo server
-
-*/
-
-/* Or use this example tcp client written in node.js.  (Originated with
-example code from
-http://www.hacksparrow.com/tcp-socket-programming-in-node-js.html.) */
-
-var printRa = ra => nexstar.DegRaToHMSString(ra, 2);
-var printDeg = dec => nexstar.DegToDmsString(dec, 2);
-
-function print(err, task, result) {
-    var formats = {
-        GetRaDec: r => `RA: ${r.ra.toFixed(5)} (${printRa(r.ra)}) DEC: ${r.dec.toFixed(5)} (${printDeg(r.dec)})`,
-        GetAzAlt: r => `AZ: ${r.az.toFixed(5)} (${printDeg(r.az)}) ALT: ${r.alt.toFixed(5)} (${printDeg(r.alt)})`,
-        unknown: function (buffer) {
-            var b = buffer.length == 0 ? Buffer.from('#') : Buffer.concat([buffer, Buffer.from('#')]);
-            // console.log('pu', buffer.length, Buffer.isBuffer(buffer), b);
-            if (echo2server) echo2server(b);
-            return b.toString();
-        }
-    };
-    console.log('<', task.name, err || '', formats[task.name] ? formats[task.name](result) : result);
+  var formats = {
+    GetRaDec: r =>
+      `RA: ${r.ra.toFixed(5)} (${printRa(r.ra)}) DEC: ${r.dec.toFixed(
+        5
+      )} (${printDeg(r.dec)})`,
+    GetAzAlt: r =>
+      `AZ: ${r.az.toFixed(5)} (${printDeg(r.az)}) ALT: ${r.alt.toFixed(
+        5
+      )} (${printDeg(r.alt)})`,
+    unknown: function(buffer) {
+      var b =
+        buffer.length == 0
+          ? Buffer.from('#')
+          : Buffer.concat([buffer, Buffer.from('#')]);
+      console.log('pu', buffer.length, Buffer.isBuffer(buffer), b);
+      // if (echo) echo(b);
+      return b.toString();
+    }
+  };
+  var buffer = task.parse(result);
+  console.log(
+    '<',
+    task.name,
+    err || '',
+    formats[task.name] ? formats[task.name](buffer) : buffer
+  );
 }
 
-// var client = new net.Socket();
-var next;
-var q = async.queue(function (task, callback) {
-    var cmd = task.command();
-    // console.log('>', task.name, task.args, Buffer.from(cmd), cmd.slice(0, 1).toString());
-    client.write(cmd);
-    next = function (err, buffer) {
-        // console.log(task.name, err | ':', new Uint8Array(buffer), buffer.toString('hex'));
-        callback(err, task, task.parse(buffer));
-    };
-}, 1);
+var DEST = 'picam2.local';
+var client = nexstar.serialClient(4000, DEST, function(sendSync) {
+  console.log('connected', DEST);
+  sendSync(nexstar.getVersion(), print);
+  sendSync(nexstar.getModel(), print);
+  sendSync(nexstar.getLocation(), print);
+  sendSync(nexstar.getTime(), print);
+  sendSync(nexstar.getRaDec(), print);
+  sendSync(nexstar.getAzAlt(), print);
+  sendSync(nexstar.getTrackingMode(), print);
+  // sendSync(nexstar.gotoRaDec(82.57101813352384, -24.73080305565209), print);
 
-q.drain = function () {
-    // console.log('queue drained');
-    // client.end();
-};
-var client = net.connect(4000, 'picam2.local', function () {
-    // console.log('Connected');
-    // q.push(nexstar.GetVersion(), print);
-    // q.push(nexstar.GetTrackingMode(), print);
-    // q.push(nexstar.IsGOTOinProgress(), print);
-    // q.push(nexstar.GetModel(), print);
-    q.push(nexstar.GetLocation(), print);
-    q.push(nexstar.GetTime(), print);
-    q.push(nexstar.RTCGetDate(), print);
-    q.push(nexstar.RTCGetYear(), print);
-    q.push(nexstar.RTCGetTime(), print);
-    q.push(nexstar.IsGPSLinked(), print);
-    // q.push(nexstar.GetAzAlt(), print);
-    // q.push(nexstar.GetRaDec(), print);
-    // q.push(nexstar.IsAlignmentComplete(), print);
-    // q.push(nexstar.GetAutoGuideRate(), print);
-    q.push(nexstar.GPSGetLatitude(), print);
-    q.push(nexstar.GPSGetLongitude(), print);
-    q.push(nexstar.GPSGetDate(), print);
-    q.push(nexstar.GPSGetYear(), print);
-    q.push(nexstar.GPSGetTime(), print);
+  setInterval(function() {
+    Object.keys(timeouts).forEach(function(key) {
+      var delta = new Date() - timeouts[key].last;
+      // console.log(key, timeouts[key].last, delta, timeouts[key].timeout);
+      if (delta > timeouts[key].timeout) {
+        // console.log('timeout', key, timeouts[key].last, delta, timeouts[key].timeout);
+        sendSync(nexstar[key](), print);
+      }
+    });
+    // sendSync(nexstar.getRaDec(), print);
+  }, 1000);
 
-    // q.push(nexstar.GotoRaDec(74.0644383430481, 26.444199085235596), print);
-    // q.push(aux.MC_GET_VER(), print);
-});
+  mqtt.subscribe(['nexstar/rpc/gotoRaDec']).then(function(granted) {
+    console.log('mqtt granted', granted);
+  });
 
-var buffers = [];
-var buffer;
-client.on('data', function (data) {
-    buffers.push(data);
-    // console.log('>', data.toString('hex'));
-    if (data.includes('#')) {
-        buffer = Buffer.concat(buffers);
-        buffers = [];
-
-        var hash = buffer.indexOf('#');
-        // console.log('hash', buffer.slice(0, hash).toString('hex'), new Uint8Array(buffer.slice(0, hash)));
-        // var a = new Uint8Array(b);
-        if (next) next(undefined, buffer.slice(0, hash));
+  mqtt.on('message', function(topic, payload, packet) {
+    try {
+      var args = JSON.parse(payload.toString());
+      var [root, type, method] = topic.split('/');
+      // console.warn('nexstar.on message', topic, payload.toString(), packet, args, root, method );
+      if (root === 'nexstar' && type == 'rpc') {
+        console.log('**** message', root, method, args);
+        sendSync(nexstar[method](...args), print);
+      }
+    } catch (err) {
+      console.error(
+        `mqtt on message error topic: ${topic} payload: ${payload.toString()}`,
+        err
+      );
     }
+  });
+
+  // sendSync(nexstar.getVersion()).then(r => console.log(r));
+  // console.log('Connected');
+  // q.push(nexstar.getVersion(), print);
+  // q.push(nexstar.getTrackingMode(), print);
+  // // q.push(nexstar.IsGOTOinProgress(), print);
+  // q.push(nexstar.getModel(), print);
+  // q.push(nexstar.getLocation(), print);
+  // q.push(nexstar.getTime(), print);
+  // q.push(nexstar.rtcGetDate(), print);
+  // q.push(nexstar.rtcGetYear(), print);
+  // q.push(nexstar.rtcGetTime(), print);
+  // q.push(nexstar.isGPSLinked(), print);
+  // q.push(nexstar.GetAzAlt(), print);
+  // q.push(nexstar.GetRaDec(), print);
+  // q.push(nexstar.IsAlignmentComplete(), print);
+  // q.push(nexstar.GetAutoGuideRate(), print);
+  // q.push(nexstar.gpsGetLatitude(), print);
+  // q.push(nexstar.gpsGetLongitude(), print);
+  // q.push(nexstar.gpsGetDate(), print);
+  // q.push(nexstar.gpsGetYear(), print);
+  // q.push(nexstar.gpsGetTime(), print);
+
+  // q.push(nexstar.GotoRaDec(74.0644383430481, 26.444199085235596), print);
+  // q.push(aux.MC_GET_VER(), print);
+  //
 });
 
-client.on('error', function (err) {
-    console.error('error', err);
-});
-
-client.on('close', function (err) {
-    if (err) console.error('close error', err);
-    // console.log('Connection closed', err || 'ok');
-    client.unref();
-    process.exit();
-});
-
-client.on('end', function (err) {
-    if (err) console.error('end error', err);
-    // console.log('end', err || 'ok');
-    // client.destroy();
-});
+var server = nexstar.serialServer(
+  client.sendSync,
+  nexstar,
+  4001,
+  '0.0.0.0',
+  async function(data) {
+    try {
+      await mqtt.publish(`nexstar/${data.topic}`, JSON.stringify(data.payload));
+    } catch (e) {
+      // Do something about it!
+      console.error('mqtt error', e);
+    }
+  }
+); // eslint-disable-line

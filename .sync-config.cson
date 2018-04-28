@@ -1,0 +1,19 @@
+remote:
+  host: "picam.local"
+  user: "pi"
+  path: "src/nexstar"
+behaviour:
+  uploadOnSave: true
+  syncDownOnOpen: false
+  forgetConsole: true
+  autoHideConsole: true
+  alwaysSyncAll: false
+option:
+  deleteFiles: false
+  exclude: [
+    ".sync-config.cson"
+    ".git"
+    "node_modules"
+    "tmp"
+    "vendor"
+  ]
